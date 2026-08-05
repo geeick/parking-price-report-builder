@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Build a Google Sheets-ready parking price workbook from Scan2Pay CSV reports.">
+  <title>Parking Price Report Builder</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="shell header-inner">
+      <div>
+        <p class="eyebrow">Safety Park</p>
+        <h1>Parking Price Report Builder</h1>
+        <p class="subtitle">Upload Scan2Pay CSV reports and download one formatted workbook with price modes, hidden ticket details, and year-over-year revenue charts.</p>
+      </div>
+      <div class="privacy-badge" title="Files are processed by your browser and are not sent to a server.">
+        <span aria-hidden="true">🔒</span>
+        <span>Runs locally in your browser</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="shell main-grid">
+    <section class="card upload-card" aria-labelledby="upload-title">
+      <div class="section-heading">
+        <div>
+          <p class="step-label">Step 1</p>
+          <h2 id="upload-title">Choose reports</h2>
+        </div>
+        <button id="clearButton" class="button button-ghost" type="button" disabled>Clear</button>
+      </div>
+
+      <div id="dropZone" class="drop-zone" tabindex="0" role="button" aria-controls="fileInput" aria-label="Choose CSV reports or drag them here">
+        <div class="drop-icon" aria-hidden="true">⇧</div>
+        <h3>Drop CSV reports here</h3>
+        <p>Choose one report, several reports, or an entire folder.</p>
+        <div class="button-row centered">
+          <label class="button button-primary" for="fileInput">Choose CSV files</label>
+          <label class="button button-secondary" for="folderInput">Choose a folder</label>
+        </div>
+        <input id="fileInput" class="visually-hidden" type="file" accept=".csv,text/csv" multiple>
+        <input id="folderInput" class="visually-hidden" type="file" accept=".csv,text/csv" multiple webkitdirectory directory>
+      </div>
+
+      <div id="fileSummary" class="file-summary" hidden>
+        <div class="file-summary-top">
+          <strong id="fileCount">0 files selected</strong>
+          <span id="fileSize">0 KB</span>
+        </div>
+        <ul id="fileList" class="file-list"></ul>
+      </div>
+    </section>
+
+    <aside class="card options-card" aria-labelledby="options-title">
+      <p class="step-label">Step 2</p>
+      <h2 id="options-title">Analysis options</h2>
+
+      <label class="option-row">
+        <input id="excludeExtensions" type="checkbox" checked>
+        <span>
+          <strong>Exclude extensions and overstays</strong>
+          <small>Removes ticket suffixes such as EXT, EEX, EOS, and OS.</small>
+        </span>
+      </label>
+
+      <label class="option-row">
+        <input id="excludeFailed" type="checkbox" checked>
+        <span>
+          <strong>Exclude failed payments</strong>
+          <small>Keeps successful payments and rows with no payment status.</small>
+        </span>
+      </label>
+
+      <label class="option-row">
+        <input id="hideCounts" type="checkbox" checked>
+        <span>
+          <strong>Hide ticket-count columns</strong>
+          <small>The counts remain in the workbook and can be unhidden in Google Sheets.</small>
+        </span>
+      </label>
+
+      <label class="option-row">
+        <input id="excludeLowVolumeModes" type="checkbox" checked>
+        <span>
+          <strong>Exclude price results supported by fewer than 3 tickets</strong>
+          <small>Hides an ordinary duration/price mode when fewer than 3 tickets support it in that location, month, and weekday/weekend group. Overnight, All Day, Until/Till, and long 20h+ products are always kept. Monthly revenue and total tickets are unchanged.</small>
+        </span>
+      </label>
+
+      <div id="locationSelector" class="location-selector" hidden>
+        <div class="location-selector-heading">
+          <div>
+            <strong>Locations to include</strong>
+            <small id="locationSelectionCount">0 locations selected</small>
+          </div>
+        </div>
+
+        <label class="location-search-label" for="locationSearch">Search locations</label>
+        <input id="locationSearch" class="location-search" type="search" placeholder="Type a location name…" autocomplete="off">
+
+        <label class="select-all-row">
+          <input id="selectAllLocations" type="checkbox" checked>
+          <span>Select all locations</span>
+        </label>
+
+        <div id="locationList" class="location-list" role="group" aria-label="Locations to include"></div>
+      </div>
+
+      <button id="buildButton" class="button button-primary button-large" type="button" disabled>
+        Build workbook
+      </button>
+      <p class="microcopy">The downloaded .xlsx file is ready to upload to Google Drive and open in Google Sheets.</p>
+    </aside>
+
+    <section id="progressCard" class="card progress-card full-width" aria-live="polite" hidden>
+      <div class="section-heading compact">
+        <div>
+          <p class="step-label">Step 3</p>
+          <h2 id="statusTitle">Reading reports…</h2>
+        </div>
+        <span id="statusPercent" class="status-percent">0%</span>
+      </div>
+      <div class="progress-track" aria-hidden="true">
+        <div id="progressBar" class="progress-bar"></div>
+      </div>
+      <p id="statusMessage" class="status-message">Preparing files.</p>
+    </section>
+
+    <section id="resultsCard" class="card results-card full-width" hidden>
+      <div class="section-heading">
+        <div>
+          <p class="step-label">Complete</p>
+          <h2>Workbook ready</h2>
+          <p id="resultsDescription" class="section-description"></p>
+        </div>
+        <button id="downloadButton" class="button button-primary button-large" type="button">Download workbook</button>
+      </div>
+
+      <div id="statsGrid" class="stats-grid"></div>
+
+      <div class="results-table-wrap">
+        <div class="table-heading">
+          <div>
+            <h3>Summary data preview</h3>
+            <p>Revenue uses the report's <strong>Amount</strong> column, excluding fees and tax.</p>
+          </div>
+        </div>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Location</th>
+                <th>Month</th>
+                <th class="number">Tickets</th>
+                <th class="number">Revenue</th>
+                <th class="number">Average ticket</th>
+              </tr>
+            </thead>
+            <tbody id="totalsBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <details id="warningDetails" class="warnings" hidden>
+        <summary>Warnings</summary>
+        <ul id="warningList"></ul>
+      </details>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="shell">
+      <p>No report data is uploaded to this website. Closing or refreshing the page clears the selected files.</p>
+    </div>
+  </footer>
+
+  <canvas id="chartCanvas" width="760" height="420" hidden></canvas>
+
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.5.4/papaparse.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js" defer></script>
+  <script src="analysis.js?v=20260805-preserve-long-stay" defer></script>
+  <script src="workbook.js?v=20260805-preserve-long-stay" defer></script>
+  <script src="app.js?v=20260805-preserve-long-stay" defer></script>
+</body>
+</html>
