@@ -103,6 +103,13 @@
     cell.font = { color: { argb: COLORS.tieText } };
   }
 
+  function styleRevenue(cell) {
+    styleBody(cell, "right");
+    cell.fill = fill(COLORS.green);
+    cell.font = { bold: true, color: { argb: COLORS.dark } };
+    cell.numFmt = "$#,##0.00";
+  }
+
   function compactMoney(value) {
     const number = Number(value);
     return Number.isInteger(number)
@@ -126,6 +133,23 @@
       lookup.set(`${total.Year}|${total["Month Number"]}`, total);
     }
     return lookup;
+  }
+
+  function durationSortValue(value) {
+    const text = String(value ?? "").trim();
+    const readable = text.match(/^(?:(\d+)h)?\s*(?:(\d+)\s*mins?)?$/i);
+    if (readable && (readable[1] || readable[2])) {
+      return [0, Number(readable[1] || 0) * 60 + Number(readable[2] || 0), text.toLowerCase()];
+    }
+    return [1, 0, text.toLowerCase()];
+  }
+
+  function compareTuples(left, right) {
+    for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+      if (left[index] < right[index]) return -1;
+      if (left[index] > right[index]) return 1;
+    }
+    return 0;
   }
 
   function renderYearComparisonChart(location, totals, years, canvas) {
@@ -335,87 +359,184 @@
     worksheet.printTitlesRow = "1:1";
   }
 
-  function addLocationSheet(workbook, location, summaryRows, options, usedNames) {
+  function writeYearHeaders(worksheet, row, years, firstYearColumn, label) {
+    const labelCell = worksheet.getCell(row, 1);
+    labelCell.value = label;
+    styleHeader(labelCell);
+
+    years.forEach((year, index) => {
+      const priceColumn = firstYearColumn + index * 2;
+      const countColumn = priceColumn + 1;
+      const priceCell = worksheet.getCell(row, priceColumn);
+      const countCell = worksheet.getCell(row, countColumn);
+      priceCell.value = `${year} Price`;
+      countCell.value = `${year} Tickets at price`;
+      styleHeader(priceCell);
+      styleHeader(countCell);
+    });
+  }
+
+  function writeDayGroupComparison(worksheet, startRow, monthRows, years, dayGroup) {
+    const totalColumns = 1 + years.length * 2;
+    worksheet.mergeCells(startRow, 1, startRow, totalColumns);
+    worksheet.getCell(startRow, 1).value = dayGroup === "Weekday" ? "Weekdays" : "Weekends";
+    styleGroup(worksheet.getCell(startRow, 1));
+
+    const headerRow = startRow + 1;
+    writeYearHeaders(worksheet, headerRow, years, 2, "Duration");
+
+    const records = monthRows.filter((row) => row["Day Group"] === dayGroup);
+    const durations = [...new Set(records.map((row) => row.Duration))]
+      .sort((left, right) => compareTuples(durationSortValue(left), durationSortValue(right)));
+    const recordLookup = new Map(
+      records.map((row) => [`${row.Year}|${row.Duration}`, row]),
+    );
+
+    let currentRow = headerRow + 1;
+    const rowsToWrite = Math.max(durations.length, 1);
+    for (let index = 0; index < rowsToWrite; index += 1) {
+      const durationCell = worksheet.getCell(currentRow, 1);
+      styleBody(durationCell);
+      if (index < durations.length) durationCell.value = durations[index];
+
+      years.forEach((year, yearIndex) => {
+        const priceColumn = 2 + yearIndex * 2;
+        const countColumn = priceColumn + 1;
+        const priceCell = worksheet.getCell(currentRow, priceColumn);
+        const countCell = worksheet.getCell(currentRow, countColumn);
+        styleBody(priceCell, "right");
+        styleBody(countCell, "right");
+
+        if (index >= durations.length) return;
+        const record = recordLookup.get(`${year}|${durations[index]}`);
+        if (!record) return;
+
+        countCell.value = record["Mode Count"];
+        countCell.numFmt = "0";
+        if (record["Is Tie"]) {
+          priceCell.value = record["Mode Prices"].map(compactMoney).join(" / ");
+          styleTie(priceCell);
+        } else {
+          priceCell.value = record["Most Common Price"];
+          priceCell.numFmt = "$0.##";
+        }
+      });
+
+      currentRow += 1;
+    }
+
+    return currentRow;
+  }
+
+  function addLocationSheet(workbook, location, summaryRows, locationMonthlyTotals, options, usedNames) {
     const sheetName = safeSheetName(location, usedNames);
+    const years = [...new Set([
+      ...summaryRows.map((row) => Number(row.Year)),
+      ...locationMonthlyTotals.map((row) => Number(row.Year)),
+    ])].sort((left, right) => left - right);
+    const totalColumns = 1 + years.length * 2;
+
     const worksheet = workbook.addWorksheet(sheetName, {
-      views: [{ state: "frozen", ySplit: 2 }],
+      views: [{ state: "frozen", xSplit: 1, ySplit: 2 }],
     });
 
-    const widths = [23, 12, 15, 3, 23, 12, 15];
-    widths.forEach((width, index) => { worksheet.getColumn(index + 1).width = width; });
-    worksheet.getColumn(3).hidden = Boolean(options.hideCounts);
-    worksheet.getColumn(7).hidden = Boolean(options.hideCounts);
+    worksheet.getColumn(1).width = 23;
+    years.forEach((_, index) => {
+      const priceColumn = 2 + index * 2;
+      const countColumn = priceColumn + 1;
+      worksheet.getColumn(priceColumn).width = 14;
+      worksheet.getColumn(countColumn).width = 16;
+      worksheet.getColumn(countColumn).hidden = Boolean(options.hideCounts);
+    });
+
     worksheet.properties.defaultRowHeight = 18;
     worksheet.getRow(1).height = 27;
-    worksheet.mergeCells(1, 1, 1, 7);
+    worksheet.mergeCells(1, 1, 1, totalColumns);
     worksheet.getCell(1, 1).value = location;
     styleTitle(worksheet.getCell(1, 1));
 
-    worksheet.mergeCells(2, 1, 2, 7);
-    worksheet.getCell(2, 1).value = "Ticket counts are stored in columns C and G. Monthly revenue comparisons are on the Summary tab. Elapsed stay times are excluded from the price tables.";
+    worksheet.mergeCells(2, 1, 2, totalColumns);
+    worksheet.getCell(2, 1).value = "Each month compares yearly prices side by side. Ticket counts are stored in the hidden columns between price years. Monthly revenue is shown above each month's price tables.";
     worksheet.getCell(2, 1).font = { italic: true, color: { argb: COLORS.muted }, size: 9 };
 
-    const monthGroups = groupBy(summaryRows, (row) => JSON.stringify([row.Year, row["Month Number"], row.Month]));
-    const sortedMonths = [...monthGroups.entries()].sort((a, b) => {
-      const [aYear, aMonth] = JSON.parse(a[0]);
-      const [bYear, bMonth] = JSON.parse(b[0]);
-      return aYear - bYear || aMonth - bMonth;
-    });
+    const totalsLookup = monthlyLookup(locationMonthlyTotals);
+    const monthNumbers = [...new Set([
+      ...summaryRows.map((row) => Number(row["Month Number"])),
+      ...locationMonthlyTotals.map((row) => Number(row["Month Number"])),
+    ])].sort((left, right) => left - right);
 
     let currentRow = 4;
-    for (const [monthKey, monthRows] of sortedMonths) {
-      const [year, , monthName] = JSON.parse(monthKey);
-      worksheet.mergeCells(currentRow, 1, currentRow, 7);
-      worksheet.getCell(currentRow, 1).value = `${monthName} ${year}`;
+    for (const monthNumber of monthNumbers) {
+      const monthName = MONTH_NAMES[monthNumber - 1];
+      const monthRows = summaryRows.filter((row) => Number(row["Month Number"]) === monthNumber);
+
+      worksheet.mergeCells(currentRow, 1, currentRow, totalColumns);
+      worksheet.getCell(currentRow, 1).value = monthName;
       styleMonth(worksheet.getCell(currentRow, 1));
       worksheet.getRow(currentRow).height = 21;
       currentRow += 1;
 
-      worksheet.mergeCells(currentRow, 1, currentRow, 3);
-      worksheet.mergeCells(currentRow, 5, currentRow, 7);
-      worksheet.getCell(currentRow, 1).value = "Weekdays";
-      worksheet.getCell(currentRow, 5).value = "Weekends";
-      styleGroup(worksheet.getCell(currentRow, 1));
-      styleGroup(worksheet.getCell(currentRow, 5));
+      const revenueHeaderRow = currentRow;
+      worksheet.getCell(revenueHeaderRow, 1).value = "Month totals";
+      styleHeader(worksheet.getCell(revenueHeaderRow, 1));
+      years.forEach((year, index) => {
+        const priceColumn = 2 + index * 2;
+        const countColumn = priceColumn + 1;
+        worksheet.getCell(revenueHeaderRow, priceColumn).value = `${year} Revenue`;
+        worksheet.getCell(revenueHeaderRow, countColumn).value = `${year} Total Tickets`;
+        styleHeader(worksheet.getCell(revenueHeaderRow, priceColumn));
+        styleHeader(worksheet.getCell(revenueHeaderRow, countColumn));
+      });
       currentRow += 1;
 
-      [[1, "Duration"], [2, "Price"], [3, "Tickets at price"], [5, "Duration"], [6, "Price"], [7, "Tickets at price"]]
-        .forEach(([column, value]) => {
-          worksheet.getCell(currentRow, column).value = value;
-          styleHeader(worksheet.getCell(currentRow, column));
-        });
-      currentRow += 1;
+      const revenueLabel = worksheet.getCell(currentRow, 1);
+      revenueLabel.value = "All purchases";
+      revenueLabel.fill = fill(COLORS.green);
+      revenueLabel.font = { bold: true, color: { argb: COLORS.dark } };
+      revenueLabel.alignment = { horizontal: "left", vertical: "middle" };
+      revenueLabel.border = thinBorder();
 
-      const weekdays = monthRows.filter((row) => row["Day Group"] === "Weekday");
-      const weekends = monthRows.filter((row) => row["Day Group"] === "Weekend");
-      const blockRows = Math.max(weekdays.length, weekends.length, 1);
+      years.forEach((year, index) => {
+        const priceColumn = 2 + index * 2;
+        const countColumn = priceColumn + 1;
+        const revenueCell = worksheet.getCell(currentRow, priceColumn);
+        const ticketCell = worksheet.getCell(currentRow, countColumn);
+        const total = totalsLookup.get(`${year}|${monthNumber}`);
 
-      for (let index = 0; index < blockRows; index += 1) {
-        for (const [startColumn, records] of [[1, weekdays], [5, weekends]]) {
-          const durationCell = worksheet.getCell(currentRow, startColumn);
-          const priceCell = worksheet.getCell(currentRow, startColumn + 1);
-          const countCell = worksheet.getCell(currentRow, startColumn + 2);
-          styleBody(durationCell);
-          styleBody(priceCell, "right");
-          styleBody(countCell, "right");
+        styleRevenue(revenueCell);
+        styleBody(ticketCell, "right");
+        ticketCell.fill = fill(COLORS.green);
+        ticketCell.font = { bold: true, color: { argb: COLORS.dark } };
 
-          if (index < records.length) {
-            const record = records[index];
-            durationCell.value = record.Duration;
-            countCell.value = record["Mode Count"];
-            countCell.numFmt = "0";
-            if (record["Is Tie"]) {
-              priceCell.value = record["Mode Prices"].map(compactMoney).join(" / ");
-              styleTie(priceCell);
-            } else {
-              priceCell.value = record["Most Common Price"];
-              priceCell.numFmt = "$0.##";
-            }
-          }
+        if (total) {
+          revenueCell.value = total["Total Revenue"];
+          ticketCell.value = total["Total Tickets"];
+          ticketCell.numFmt = "0";
+        } else {
+          revenueCell.value = "-";
+          revenueCell.alignment = { horizontal: "center", vertical: "middle" };
+          ticketCell.value = "-";
+          ticketCell.alignment = { horizontal: "center", vertical: "middle" };
         }
-        currentRow += 1;
-      }
+      });
       currentRow += 2;
+
+      currentRow = writeDayGroupComparison(
+        worksheet,
+        currentRow,
+        monthRows,
+        years,
+        "Weekday",
+      );
+      currentRow += 1;
+      currentRow = writeDayGroupComparison(
+        worksheet,
+        currentRow,
+        monthRows,
+        years,
+        "Weekend",
+      );
+      currentRow += 3;
     }
 
     worksheet.pageSetup = {
@@ -441,7 +562,11 @@
     addSummarySheet(workbook, analysis.monthlyTotals, canvas);
 
     const summariesByLocation = groupBy(analysis.weekdayWeekend, (row) => row.Location);
-    const locations = [...summariesByLocation.keys()].sort((a, b) => a.localeCompare(b));
+    const totalsByLocation = groupBy(analysis.monthlyTotals, (row) => row.Location);
+    const locations = [...new Set([
+      ...summariesByLocation.keys(),
+      ...totalsByLocation.keys(),
+    ])].sort((a, b) => a.localeCompare(b));
     const usedNames = new Set(["summary"]);
 
     for (let index = 0; index < locations.length; index += 1) {
@@ -450,7 +575,8 @@
       addLocationSheet(
         workbook,
         location,
-        summariesByLocation.get(location),
+        summariesByLocation.get(location) || [],
+        totalsByLocation.get(location) || [],
         options,
         usedNames,
       );
