@@ -22,12 +22,7 @@
   ];
 
   const CHART_COLORS = [
-    "#4472C4",
-    "#C0504D",
-    "#70AD47",
-    "#8064A2",
-    "#ED7D31",
-    "#5B9BD5",
+    "#4472C4", "#C0504D", "#70AD47", "#8064A2", "#ED7D31", "#5B9BD5",
   ];
 
   function thinBorder(color = COLORS.border) {
@@ -44,15 +39,19 @@
   }
 
   function safeSheetName(location, usedNames) {
-    let name = String(location).replace(/\s+Parking\s*$/i, "").replace(/[\\/*?:\[\]]/g, "-").trim();
+    let name = String(location)
+      .replace(/\s+Parking\s*$/i, "")
+      .replace(/[\\/*?:\[\]]/g, "-")
+      .trim();
     if (!name) name = "Location";
     name = name.slice(0, 31);
+
     let candidate = name;
-    let suffix = 2;
+    let suffixNumber = 2;
     while (usedNames.has(candidate.toLowerCase())) {
-      const extra = ` (${suffix})`;
-      candidate = `${name.slice(0, 31 - extra.length)}${extra}`;
-      suffix += 1;
+      const suffix = ` (${suffixNumber})`;
+      candidate = `${name.slice(0, 31 - suffix.length)}${suffix}`;
+      suffixNumber += 1;
     }
     usedNames.add(candidate.toLowerCase());
     return candidate;
@@ -67,7 +66,7 @@
   function styleMonth(cell) {
     cell.fill = fill(COLORS.paleBlue);
     cell.font = { bold: true, color: { argb: COLORS.dark }, size: 12 };
-    cell.alignment = { horizontal: "left", vertical: "middle" };
+    cell.alignment = { horizontal: "center", vertical: "middle" };
     cell.border = { bottom: { style: "thin", color: { argb: "FF9EADBA" } } };
   }
 
@@ -103,18 +102,14 @@
     cell.font = { color: { argb: COLORS.tieText } };
   }
 
-  function styleRevenue(cell) {
-    styleBody(cell, "right");
-    cell.fill = fill(COLORS.green);
-    cell.font = { bold: true, color: { argb: COLORS.dark } };
-    cell.numFmt = "$#,##0.00";
-  }
-
   function compactMoney(value) {
     const number = Number(value);
     return Number.isInteger(number)
       ? `$${number.toLocaleString("en-US")}`
-      : `$${number.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      : `$${number.toLocaleString("en-US", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })}`;
   }
 
   function groupBy(items, keyFunction) {
@@ -137,9 +132,9 @@
 
   function durationSortValue(value) {
     const text = String(value ?? "").trim();
-    const readable = text.match(/^(?:(\d+)h)?\s*(?:(\d+)\s*mins?)?$/i);
-    if (readable && (readable[1] || readable[2])) {
-      return [0, Number(readable[1] || 0) * 60 + Number(readable[2] || 0), text.toLowerCase()];
+    const match = text.match(/^(?:(\d+)h)?\s*(?:(\d+)\s*mins?)?$/i);
+    if (match && (match[1] || match[2])) {
+      return [0, Number(match[1] || 0) * 60 + Number(match[2] || 0), text.toLowerCase()];
     }
     return [1, 0, text.toLowerCase()];
   }
@@ -155,8 +150,8 @@
   function renderYearComparisonChart(location, totals, years, canvas) {
     const context = canvas.getContext("2d");
     context.clearRect(0, 0, canvas.width, canvas.height);
-
     const lookup = monthlyLookup(totals);
+
     const datasets = years.map((year, index) => {
       const color = CHART_COLORS[index % CHART_COLORS.length];
       return {
@@ -178,10 +173,7 @@
 
     const chart = new Chart(context, {
       type: "line",
-      data: {
-        labels: MONTH_NAMES,
-        datasets,
-      },
+      data: { labels: MONTH_NAMES, datasets },
       options: {
         responsive: false,
         animation: false,
@@ -203,7 +195,9 @@
           title: { display: false, text: location },
           tooltip: {
             callbacks: {
-              label: (contextValue) => `${contextValue.dataset.label}: $${Number(contextValue.parsed.y).toLocaleString("en-US")}`,
+              label: (contextValue) => (
+                `${contextValue.dataset.label}: $${Number(contextValue.parsed.y).toLocaleString("en-US")}`
+              ),
             },
           },
         },
@@ -303,10 +297,7 @@
         monthCell.value = MONTH_NAMES[monthNumber - 1];
         styleBody(locationCell);
         styleBody(monthCell);
-
-        if (monthNumber === 1) {
-          locationCell.font = { bold: true };
-        }
+        if (monthNumber === 1) locationCell.font = { bold: true };
 
         for (const year of years) {
           const columns = yearColumns.get(year);
@@ -335,7 +326,6 @@
             averageCell.alignment = { horizontal: "center", vertical: "middle" };
           }
         }
-
         currentRow += 1;
       }
 
@@ -345,7 +335,6 @@
         tl: { col: chartStartColumn - 1, row: groupStartRow - 1 },
         ext: { width: 390, height: 214 },
       });
-
       currentRow += 1;
     }
 
@@ -354,78 +343,141 @@
       fitToPage: true,
       fitToWidth: 1,
       fitToHeight: 0,
-      margins: { left: 0.25, right: 0.25, top: 0.35, bottom: 0.35, header: 0.15, footer: 0.15 },
+      margins: {
+        left: 0.25, right: 0.25, top: 0.35, bottom: 0.35, header: 0.15, footer: 0.15,
+      },
     };
     worksheet.printTitlesRow = "1:1";
   }
 
-  function writeYearHeaders(worksheet, row, years, firstYearColumn, label) {
-    const labelCell = worksheet.getCell(row, 1);
-    labelCell.value = label;
-    styleHeader(labelCell);
+  function buildSectionLayout(years) {
+    const sectionWidth = 1 + years.length * 2;
+    const weekdayStart = 1;
+    const weekdayEnd = sectionWidth;
+    const spacerColumn = weekdayEnd + 1;
+    const weekendStart = spacerColumn + 1;
+    const weekendEnd = weekendStart + sectionWidth - 1;
+    const totalsSpacerColumn = weekendEnd + 1;
+    const totalsLabelColumn = totalsSpacerColumn + 1;
+    const totalsValueColumn = totalsLabelColumn + 1;
 
-    years.forEach((year, index) => {
-      const priceColumn = firstYearColumn + index * 2;
+    return {
+      sectionWidth,
+      weekdayStart,
+      weekdayEnd,
+      spacerColumn,
+      weekendStart,
+      weekendEnd,
+      totalsSpacerColumn,
+      totalsLabelColumn,
+      totalsValueColumn,
+    };
+  }
+
+  function configureLocationColumns(worksheet, years, layout, hideCounts) {
+    worksheet.getColumn(layout.weekdayStart).width = 23;
+    worksheet.getColumn(layout.weekendStart).width = 23;
+    worksheet.getColumn(layout.spacerColumn).width = 3;
+    worksheet.getColumn(layout.totalsSpacerColumn).width = 3;
+    worksheet.getColumn(layout.totalsLabelColumn).width = 16;
+    worksheet.getColumn(layout.totalsValueColumn).width = 15;
+
+    for (let yearIndex = 0; yearIndex < years.length; yearIndex += 1) {
+      const weekdayPriceColumn = layout.weekdayStart + 1 + yearIndex * 2;
+      const weekdayCountColumn = weekdayPriceColumn + 1;
+      const weekendPriceColumn = layout.weekendStart + 1 + yearIndex * 2;
+      const weekendCountColumn = weekendPriceColumn + 1;
+
+      worksheet.getColumn(weekdayPriceColumn).width = 14;
+      worksheet.getColumn(weekdayCountColumn).width = 16;
+      worksheet.getColumn(weekendPriceColumn).width = 14;
+      worksheet.getColumn(weekendCountColumn).width = 16;
+
+      worksheet.getColumn(weekdayCountColumn).hidden = Boolean(hideCounts);
+      worksheet.getColumn(weekendCountColumn).hidden = Boolean(hideCounts);
+    }
+  }
+
+  function writeSectionHeader(worksheet, row, startColumn, years) {
+    worksheet.getCell(row, startColumn).value = "Duration";
+    styleHeader(worksheet.getCell(row, startColumn));
+
+    years.forEach((year, yearIndex) => {
+      const priceColumn = startColumn + 1 + yearIndex * 2;
       const countColumn = priceColumn + 1;
-      const priceCell = worksheet.getCell(row, priceColumn);
-      const countCell = worksheet.getCell(row, countColumn);
-      priceCell.value = `${year} Price`;
-      countCell.value = `${year} Tickets at price`;
-      styleHeader(priceCell);
-      styleHeader(countCell);
+      worksheet.getCell(row, priceColumn).value = `${year} Price`;
+      worksheet.getCell(row, countColumn).value = "Tickets at price";
+      styleHeader(worksheet.getCell(row, priceColumn));
+      styleHeader(worksheet.getCell(row, countColumn));
     });
   }
 
-  function writeDayGroupComparison(worksheet, startRow, monthRows, years, dayGroup) {
-    const totalColumns = 1 + years.length * 2;
-    worksheet.mergeCells(startRow, 1, startRow, totalColumns);
-    worksheet.getCell(startRow, 1).value = dayGroup === "Weekday" ? "Weekdays" : "Weekends";
-    styleGroup(worksheet.getCell(startRow, 1));
-
-    const headerRow = startRow + 1;
-    writeYearHeaders(worksheet, headerRow, years, 2, "Duration");
-
+  function collectDayGroupRows(monthRows, dayGroup) {
     const records = monthRows.filter((row) => row["Day Group"] === dayGroup);
     const durations = [...new Set(records.map((row) => row.Duration))]
       .sort((left, right) => compareTuples(durationSortValue(left), durationSortValue(right)));
-    const recordLookup = new Map(
-      records.map((row) => [`${row.Year}|${row.Duration}`, row]),
-    );
+    const lookup = new Map(records.map((row) => [`${row.Year}|${row.Duration}`, row]));
+    return { durations, lookup };
+  }
 
-    let currentRow = headerRow + 1;
-    const rowsToWrite = Math.max(durations.length, 1);
-    for (let index = 0; index < rowsToWrite; index += 1) {
-      const durationCell = worksheet.getCell(currentRow, 1);
-      styleBody(durationCell);
-      if (index < durations.length) durationCell.value = durations[index];
+  function writeSectionRow(worksheet, row, startColumn, years, duration, lookup) {
+    const durationCell = worksheet.getCell(row, startColumn);
+    styleBody(durationCell);
+    if (duration) durationCell.value = duration;
 
-      years.forEach((year, yearIndex) => {
-        const priceColumn = 2 + yearIndex * 2;
-        const countColumn = priceColumn + 1;
-        const priceCell = worksheet.getCell(currentRow, priceColumn);
-        const countCell = worksheet.getCell(currentRow, countColumn);
-        styleBody(priceCell, "right");
-        styleBody(countCell, "right");
+    years.forEach((year, yearIndex) => {
+      const priceColumn = startColumn + 1 + yearIndex * 2;
+      const countColumn = priceColumn + 1;
+      const priceCell = worksheet.getCell(row, priceColumn);
+      const countCell = worksheet.getCell(row, countColumn);
+      styleBody(priceCell, "right");
+      styleBody(countCell, "right");
 
-        if (index >= durations.length) return;
-        const record = recordLookup.get(`${year}|${durations[index]}`);
-        if (!record) return;
+      if (!duration) return;
+      const record = lookup.get(`${year}|${duration}`);
+      if (!record) return;
 
-        countCell.value = record["Mode Count"];
-        countCell.numFmt = "0";
-        if (record["Is Tie"]) {
-          priceCell.value = record["Mode Prices"].map(compactMoney).join(" / ");
-          styleTie(priceCell);
-        } else {
-          priceCell.value = record["Most Common Price"];
-          priceCell.numFmt = "$0.##";
-        }
-      });
+      countCell.value = record["Mode Count"];
+      countCell.numFmt = "0";
+      if (record["Is Tie"]) {
+        priceCell.value = record["Mode Prices"].map(compactMoney).join(" / ");
+        styleTie(priceCell);
+      } else {
+        priceCell.value = record["Most Common Price"];
+        priceCell.numFmt = "$0.##";
+      }
+    });
+  }
 
-      currentRow += 1;
-    }
+  function writeMonthlyRevenueTotals(
+    worksheet,
+    firstRow,
+    years,
+    monthNumber,
+    totalsLookup,
+    labelColumn,
+    valueColumn,
+  ) {
+    years.forEach((year, yearIndex) => {
+      const row = firstRow + yearIndex;
+      const labelCell = worksheet.getCell(row, labelColumn);
+      const valueCell = worksheet.getCell(row, valueColumn);
+      labelCell.value = `${year} Total:`;
+      labelCell.font = { bold: true };
+      labelCell.alignment = { horizontal: "right", vertical: "middle" };
 
-    return currentRow;
+      const total = totalsLookup.get(`${year}|${monthNumber}`);
+      if (total) {
+        valueCell.value = total["Total Revenue"];
+        valueCell.numFmt = "$#,##0.00";
+      } else {
+        valueCell.value = "-";
+        valueCell.alignment = { horizontal: "center", vertical: "middle" };
+      }
+      valueCell.fill = fill(COLORS.green);
+      valueCell.font = { bold: true, color: { argb: COLORS.dark } };
+      valueCell.border = thinBorder();
+    });
   }
 
   function addLocationSheet(workbook, location, summaryRows, locationMonthlyTotals, options, usedNames) {
@@ -434,30 +486,28 @@
       ...summaryRows.map((row) => Number(row.Year)),
       ...locationMonthlyTotals.map((row) => Number(row.Year)),
     ])].sort((left, right) => left - right);
-    const totalColumns = 1 + years.length * 2;
+    const layout = buildSectionLayout(years);
 
     const worksheet = workbook.addWorksheet(sheetName, {
-      views: [{ state: "frozen", xSplit: 1, ySplit: 2 }],
+      views: [{ state: "frozen", ySplit: 2 }],
     });
-
-    worksheet.getColumn(1).width = 23;
-    years.forEach((_, index) => {
-      const priceColumn = 2 + index * 2;
-      const countColumn = priceColumn + 1;
-      worksheet.getColumn(priceColumn).width = 14;
-      worksheet.getColumn(countColumn).width = 16;
-      worksheet.getColumn(countColumn).hidden = Boolean(options.hideCounts);
-    });
+    configureLocationColumns(worksheet, years, layout, options.hideCounts);
 
     worksheet.properties.defaultRowHeight = 18;
     worksheet.getRow(1).height = 27;
-    worksheet.mergeCells(1, 1, 1, totalColumns);
+    worksheet.mergeCells(1, 1, 1, layout.weekendEnd);
     worksheet.getCell(1, 1).value = location;
     styleTitle(worksheet.getCell(1, 1));
 
-    worksheet.mergeCells(2, 1, 2, totalColumns);
-    worksheet.getCell(2, 1).value = "Each month compares yearly prices side by side. Ticket counts are stored in the hidden columns between price years. Monthly revenue is shown above each month's price tables.";
-    worksheet.getCell(2, 1).font = { italic: true, color: { argb: COLORS.muted }, size: 9 };
+    worksheet.mergeCells(2, 1, 2, layout.weekendEnd);
+    worksheet.getCell(2, 1).value = (
+      "Weekday and weekend prices are shown side by side. Ticket-count columns remain between yearly prices and are hidden by default. Monthly revenue totals are shown on the right."
+    );
+    worksheet.getCell(2, 1).font = {
+      italic: true,
+      color: { argb: COLORS.muted },
+      size: 9,
+    };
 
     const totalsLookup = monthlyLookup(locationMonthlyTotals);
     const monthNumbers = [...new Set([
@@ -468,74 +518,67 @@
     let currentRow = 4;
     for (const monthNumber of monthNumbers) {
       const monthName = MONTH_NAMES[monthNumber - 1];
-      const monthRows = summaryRows.filter((row) => Number(row["Month Number"]) === monthNumber);
+      const monthRows = summaryRows.filter(
+        (row) => Number(row["Month Number"]) === monthNumber,
+      );
+      const weekdayData = collectDayGroupRows(monthRows, "Weekday");
+      const weekendData = collectDayGroupRows(monthRows, "Weekend");
 
-      worksheet.mergeCells(currentRow, 1, currentRow, totalColumns);
-      worksheet.getCell(currentRow, 1).value = monthName;
-      styleMonth(worksheet.getCell(currentRow, 1));
+      worksheet.mergeCells(currentRow, layout.weekdayStart, currentRow, layout.weekendEnd);
+      worksheet.getCell(currentRow, layout.weekdayStart).value = monthName;
+      styleMonth(worksheet.getCell(currentRow, layout.weekdayStart));
       worksheet.getRow(currentRow).height = 21;
       currentRow += 1;
 
-      const revenueHeaderRow = currentRow;
-      worksheet.getCell(revenueHeaderRow, 1).value = "Month totals";
-      styleHeader(worksheet.getCell(revenueHeaderRow, 1));
-      years.forEach((year, index) => {
-        const priceColumn = 2 + index * 2;
-        const countColumn = priceColumn + 1;
-        worksheet.getCell(revenueHeaderRow, priceColumn).value = `${year} Revenue`;
-        worksheet.getCell(revenueHeaderRow, countColumn).value = `${year} Total Tickets`;
-        styleHeader(worksheet.getCell(revenueHeaderRow, priceColumn));
-        styleHeader(worksheet.getCell(revenueHeaderRow, countColumn));
-      });
+      worksheet.mergeCells(currentRow, layout.weekdayStart, currentRow, layout.weekdayEnd);
+      worksheet.mergeCells(currentRow, layout.weekendStart, currentRow, layout.weekendEnd);
+      worksheet.getCell(currentRow, layout.weekdayStart).value = "Weekdays:";
+      worksheet.getCell(currentRow, layout.weekendStart).value = "Weekends";
+      styleGroup(worksheet.getCell(currentRow, layout.weekdayStart));
+      styleGroup(worksheet.getCell(currentRow, layout.weekendStart));
       currentRow += 1;
 
-      const revenueLabel = worksheet.getCell(currentRow, 1);
-      revenueLabel.value = "All purchases";
-      revenueLabel.fill = fill(COLORS.green);
-      revenueLabel.font = { bold: true, color: { argb: COLORS.dark } };
-      revenueLabel.alignment = { horizontal: "left", vertical: "middle" };
-      revenueLabel.border = thinBorder();
-
-      years.forEach((year, index) => {
-        const priceColumn = 2 + index * 2;
-        const countColumn = priceColumn + 1;
-        const revenueCell = worksheet.getCell(currentRow, priceColumn);
-        const ticketCell = worksheet.getCell(currentRow, countColumn);
-        const total = totalsLookup.get(`${year}|${monthNumber}`);
-
-        styleRevenue(revenueCell);
-        styleBody(ticketCell, "right");
-        ticketCell.fill = fill(COLORS.green);
-        ticketCell.font = { bold: true, color: { argb: COLORS.dark } };
-
-        if (total) {
-          revenueCell.value = total["Total Revenue"];
-          ticketCell.value = total["Total Tickets"];
-          ticketCell.numFmt = "0";
-        } else {
-          revenueCell.value = "-";
-          revenueCell.alignment = { horizontal: "center", vertical: "middle" };
-          ticketCell.value = "-";
-          ticketCell.alignment = { horizontal: "center", vertical: "middle" };
-        }
-      });
-      currentRow += 2;
-
-      currentRow = writeDayGroupComparison(
+      const headerRow = currentRow;
+      writeSectionHeader(worksheet, headerRow, layout.weekdayStart, years);
+      writeSectionHeader(worksheet, headerRow, layout.weekendStart, years);
+      writeMonthlyRevenueTotals(
         worksheet,
-        currentRow,
-        monthRows,
+        headerRow,
         years,
-        "Weekday",
+        monthNumber,
+        totalsLookup,
+        layout.totalsLabelColumn,
+        layout.totalsValueColumn,
       );
       currentRow += 1;
-      currentRow = writeDayGroupComparison(
-        worksheet,
-        currentRow,
-        monthRows,
-        years,
-        "Weekend",
+
+      const visibleRows = Math.max(
+        weekdayData.durations.length,
+        weekendData.durations.length,
+        years.length - 1,
+        1,
       );
+
+      for (let index = 0; index < visibleRows; index += 1) {
+        writeSectionRow(
+          worksheet,
+          currentRow,
+          layout.weekdayStart,
+          years,
+          weekdayData.durations[index] || "",
+          weekdayData.lookup,
+        );
+        writeSectionRow(
+          worksheet,
+          currentRow,
+          layout.weekendStart,
+          years,
+          weekendData.durations[index] || "",
+          weekendData.lookup,
+        );
+        currentRow += 1;
+      }
+
       currentRow += 3;
     }
 
@@ -544,14 +587,20 @@
       fitToPage: true,
       fitToWidth: 1,
       fitToHeight: 0,
-      margins: { left: 0.35, right: 0.35, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 },
+      margins: {
+        left: 0.25, right: 0.25, top: 0.45, bottom: 0.45, header: 0.2, footer: 0.2,
+      },
     };
     worksheet.printTitlesRow = "1:1";
   }
 
   async function buildWorkbook(analysis, options = {}, onProgress = () => {}) {
-    if (!window.ExcelJS) throw new Error("ExcelJS did not load. Check the internet connection and refresh the page.");
-    if (!window.Chart) throw new Error("Chart.js did not load. Check the internet connection and refresh the page.");
+    if (!window.ExcelJS) {
+      throw new Error("ExcelJS did not load. Check the internet connection and refresh the page.");
+    }
+    if (!window.Chart) {
+      throw new Error("Chart.js did not load. Check the internet connection and refresh the page.");
+    }
 
     const workbook = new ExcelJS.Workbook();
     workbook.creator = "Safety Park Parking Price Report Builder";
@@ -566,12 +615,16 @@
     const locations = [...new Set([
       ...summariesByLocation.keys(),
       ...totalsByLocation.keys(),
-    ])].sort((a, b) => a.localeCompare(b));
+    ])].sort((left, right) => left.localeCompare(right));
     const usedNames = new Set(["summary"]);
 
     for (let index = 0; index < locations.length; index += 1) {
       const location = locations[index];
-      onProgress({ completed: index, total: locations.length, message: `Formatting ${location}` });
+      onProgress({
+        completed: index,
+        total: locations.length,
+        message: `Formatting ${location}`,
+      });
       addLocationSheet(
         workbook,
         location,
@@ -582,7 +635,11 @@
       );
     }
 
-    onProgress({ completed: locations.length, total: locations.length, message: "Writing workbook file" });
+    onProgress({
+      completed: locations.length,
+      total: locations.length,
+      message: "Writing workbook file",
+    });
     const buffer = await workbook.xlsx.writeBuffer();
     return new Blob([buffer], {
       type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
