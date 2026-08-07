@@ -63,13 +63,6 @@
     cell.alignment = { horizontal: "center", vertical: "middle" };
   }
 
-  function styleMonth(cell) {
-    cell.fill = fill(COLORS.paleBlue);
-    cell.font = { bold: true, color: { argb: COLORS.dark }, size: 12 };
-    cell.alignment = { horizontal: "center", vertical: "middle" };
-    cell.border = { bottom: { style: "thin", color: { argb: "FF9EADBA" } } };
-  }
-
   function styleGroup(cell) {
     cell.fill = fill(COLORS.blue);
     cell.font = { bold: true, color: { argb: COLORS.white } };
@@ -80,14 +73,14 @@
   function styleHeader(cell) {
     cell.fill = fill(COLORS.headerBlue);
     cell.font = { bold: true };
-    cell.alignment = { horizontal: "center", vertical: "middle" };
+    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
     cell.border = thinBorder(COLORS.headerBorder);
   }
 
   function styleSummaryHeader(cell) {
     cell.fill = fill(COLORS.navy);
     cell.font = { bold: true, color: { argb: COLORS.white } };
-    cell.alignment = { horizontal: "center", vertical: "middle" };
+    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
     cell.border = thinBorder(COLORS.navy);
   }
 
@@ -350,158 +343,243 @@
     worksheet.printTitlesRow = "1:1";
   }
 
-  function buildSectionLayout(years) {
-    const sectionWidth = 1 + years.length * 2;
-    const weekdayStart = 1;
-    const weekdayEnd = sectionWidth;
-    const spacerColumn = weekdayEnd + 1;
-    const weekendStart = spacerColumn + 1;
-    const weekendEnd = weekendStart + sectionWidth - 1;
-    const totalsSpacerColumn = weekendEnd + 1;
-    const totalsLabelColumn = totalsSpacerColumn + 1;
-    const totalsValueColumn = totalsLabelColumn + 1;
+  function collectDurations(summaryRows, dayGroup) {
+    return [...new Set(
+      summaryRows
+        .filter((row) => row["Day Group"] === dayGroup)
+        .map((row) => row.Duration),
+    )].sort((left, right) => compareTuples(durationSortValue(left), durationSortValue(right)));
+  }
+
+  function createPriceLookup(summaryRows) {
+    return new Map(summaryRows.map((row) => [
+      `${row["Day Group"]}|${row.Year}|${row["Month Number"]}|${row.Duration}`,
+      row,
+    ]));
+  }
+
+  function buildGridLayout(durations, years, startColumn = 1) {
+    const dateColumn = startColumn;
+    const durationGroups = [];
+    let nextColumn = dateColumn + 1;
+
+    for (const duration of durations) {
+      const groupStart = nextColumn;
+      const yearColumns = new Map();
+      for (const year of years) {
+        const priceColumn = nextColumn;
+        const countColumn = nextColumn + 1;
+        yearColumns.set(year, { priceColumn, countColumn });
+        nextColumn += 2;
+      }
+      durationGroups.push({
+        duration,
+        startColumn: groupStart,
+        endColumn: nextColumn - 1,
+        yearColumns,
+      });
+    }
 
     return {
-      sectionWidth,
-      weekdayStart,
-      weekdayEnd,
-      spacerColumn,
-      weekendStart,
-      weekendEnd,
-      totalsSpacerColumn,
-      totalsLabelColumn,
-      totalsValueColumn,
+      dateColumn,
+      durationGroups,
+      endColumn: Math.max(dateColumn, nextColumn - 1),
+      nextColumn,
     };
   }
 
-  function configureLocationColumns(worksheet, years, layout, hideCounts) {
-    worksheet.getColumn(layout.weekdayStart).width = 23;
-    worksheet.getColumn(layout.weekendStart).width = 23;
-    worksheet.getColumn(layout.spacerColumn).width = 3;
-    worksheet.getColumn(layout.totalsSpacerColumn).width = 3;
-    worksheet.getColumn(layout.totalsLabelColumn).width = 16;
-    worksheet.getColumn(layout.totalsValueColumn).width = 15;
-
-    for (let yearIndex = 0; yearIndex < years.length; yearIndex += 1) {
-      const weekdayPriceColumn = layout.weekdayStart + 1 + yearIndex * 2;
-      const weekdayCountColumn = weekdayPriceColumn + 1;
-      const weekendPriceColumn = layout.weekendStart + 1 + yearIndex * 2;
-      const weekendCountColumn = weekendPriceColumn + 1;
-
-      worksheet.getColumn(weekdayPriceColumn).width = 14;
-      worksheet.getColumn(weekdayCountColumn).width = 16;
-      worksheet.getColumn(weekendPriceColumn).width = 14;
-      worksheet.getColumn(weekendCountColumn).width = 16;
-
-      worksheet.getColumn(weekdayCountColumn).hidden = Boolean(hideCounts);
-      worksheet.getColumn(weekendCountColumn).hidden = Boolean(hideCounts);
+  function configureGridColumns(worksheet, layout, hideCounts) {
+    worksheet.getColumn(layout.dateColumn).width = 13;
+    for (const group of layout.durationGroups) {
+      for (const columns of group.yearColumns.values()) {
+        worksheet.getColumn(columns.priceColumn).width = 12;
+        worksheet.getColumn(columns.countColumn).width = 14;
+        worksheet.getColumn(columns.countColumn).hidden = Boolean(hideCounts);
+      }
     }
   }
 
-  function writeSectionHeader(worksheet, row, startColumn, years) {
-    worksheet.getCell(row, startColumn).value = "Duration";
-    styleHeader(worksheet.getCell(row, startColumn));
+  function writePriceValue(priceCell, countCell, record) {
+    styleBody(priceCell, "right");
+    styleBody(countCell, "right");
+    if (!record) return;
 
-    years.forEach((year, yearIndex) => {
-      const priceColumn = startColumn + 1 + yearIndex * 2;
-      const countColumn = priceColumn + 1;
-      worksheet.getCell(row, priceColumn).value = `${year} Price`;
-      worksheet.getCell(row, countColumn).value = "Tickets at price";
-      styleHeader(worksheet.getCell(row, priceColumn));
-      styleHeader(worksheet.getCell(row, countColumn));
-    });
+    countCell.value = record["Mode Count"];
+    countCell.numFmt = "0";
+    if (record["Is Tie"]) {
+      priceCell.value = record["Mode Prices"].map(compactMoney).join(" / ");
+      styleTie(priceCell);
+    } else {
+      priceCell.value = record["Most Common Price"];
+      priceCell.numFmt = "$0.##";
+    }
   }
 
-  function collectDayGroupRows(monthRows, dayGroup) {
-    const records = monthRows.filter((row) => row["Day Group"] === dayGroup);
-    const durations = [...new Set(records.map((row) => row.Duration))]
-      .sort((left, right) => compareTuples(durationSortValue(left), durationSortValue(right)));
-    const lookup = new Map(records.map((row) => [`${row.Year}|${row.Duration}`, row]));
-    return { durations, lookup };
-  }
-
-  function writeSectionRow(worksheet, row, startColumn, years, duration, lookup) {
-    const durationCell = worksheet.getCell(row, startColumn);
-    styleBody(durationCell);
-    if (duration) durationCell.value = duration;
-
-    years.forEach((year, yearIndex) => {
-      const priceColumn = startColumn + 1 + yearIndex * 2;
-      const countColumn = priceColumn + 1;
-      const priceCell = worksheet.getCell(row, priceColumn);
-      const countCell = worksheet.getCell(row, countColumn);
-      styleBody(priceCell, "right");
-      styleBody(countCell, "right");
-
-      if (!duration) return;
-      const record = lookup.get(`${year}|${duration}`);
-      if (!record) return;
-
-      countCell.value = record["Mode Count"];
-      countCell.numFmt = "0";
-      if (record["Is Tie"]) {
-        priceCell.value = record["Mode Prices"].map(compactMoney).join(" / ");
-        styleTie(priceCell);
-      } else {
-        priceCell.value = record["Most Common Price"];
-        priceCell.numFmt = "$0.##";
-      }
-    });
-  }
-
-  function writeMonthlyRevenueTotals(
+  function writePriceGrid(
     worksheet,
-    firstRow,
+    startRow,
+    title,
+    dayGroup,
+    layout,
     years,
-    monthNumber,
-    totalsLookup,
-    labelColumn,
-    valueColumn,
+    priceLookup,
   ) {
-    years.forEach((year, yearIndex) => {
-      const row = firstRow + yearIndex;
-      const labelCell = worksheet.getCell(row, labelColumn);
-      const valueCell = worksheet.getCell(row, valueColumn);
-      labelCell.value = `${year} Total:`;
-      labelCell.font = { bold: true };
-      labelCell.alignment = { horizontal: "right", vertical: "middle" };
+    const groupRow = startRow;
+    const durationHeaderRow = startRow + 1;
+    const yearHeaderRow = startRow + 2;
+    const firstDataRow = startRow + 3;
 
-      const total = totalsLookup.get(`${year}|${monthNumber}`);
-      if (total) {
-        valueCell.value = total["Total Revenue"];
-        valueCell.numFmt = "$#,##0.00";
-      } else {
-        valueCell.value = "-";
-        valueCell.alignment = { horizontal: "center", vertical: "middle" };
+    worksheet.mergeCells(groupRow, layout.dateColumn, groupRow, layout.endColumn);
+    worksheet.getCell(groupRow, layout.dateColumn).value = title;
+    styleGroup(worksheet.getCell(groupRow, layout.dateColumn));
+
+    worksheet.mergeCells(durationHeaderRow, layout.dateColumn, yearHeaderRow, layout.dateColumn);
+    worksheet.getCell(durationHeaderRow, layout.dateColumn).value = "Date";
+    styleHeader(worksheet.getCell(durationHeaderRow, layout.dateColumn));
+
+    for (const group of layout.durationGroups) {
+      worksheet.mergeCells(durationHeaderRow, group.startColumn, durationHeaderRow, group.endColumn);
+      worksheet.getCell(durationHeaderRow, group.startColumn).value = group.duration;
+      styleHeader(worksheet.getCell(durationHeaderRow, group.startColumn));
+
+      for (const year of years) {
+        const columns = group.yearColumns.get(year);
+        worksheet.getCell(yearHeaderRow, columns.priceColumn).value = `${year} Price`;
+        worksheet.getCell(yearHeaderRow, columns.countColumn).value = `${year} Tickets`;
+        styleHeader(worksheet.getCell(yearHeaderRow, columns.priceColumn));
+        styleHeader(worksheet.getCell(yearHeaderRow, columns.countColumn));
       }
-      valueCell.fill = fill(COLORS.green);
-      valueCell.font = { bold: true, color: { argb: COLORS.dark } };
-      valueCell.border = thinBorder();
-    });
+    }
+
+    for (let monthNumber = 1; monthNumber <= 12; monthNumber += 1) {
+      const row = firstDataRow + monthNumber - 1;
+      const monthCell = worksheet.getCell(row, layout.dateColumn);
+      monthCell.value = MONTH_NAMES[monthNumber - 1];
+      styleBody(monthCell);
+
+      for (const group of layout.durationGroups) {
+        for (const year of years) {
+          const columns = group.yearColumns.get(year);
+          const record = priceLookup.get(
+            `${dayGroup}|${year}|${monthNumber}|${group.duration}`,
+          );
+          writePriceValue(
+            worksheet.getCell(row, columns.priceColumn),
+            worksheet.getCell(row, columns.countColumn),
+            record,
+          );
+        }
+      }
+    }
+
+    return firstDataRow + 12;
   }
 
-  function addLocationSheet(workbook, location, summaryRows, locationMonthlyTotals, options, usedNames) {
+  function writeRevenueGrid(
+    worksheet,
+    startRow,
+    startColumn,
+    years,
+    totalsLookup,
+    hideCounts,
+  ) {
+    const endColumn = startColumn + years.length * 2;
+    worksheet.mergeCells(startRow, startColumn, startRow, endColumn);
+    worksheet.getCell(startRow, startColumn).value = "Monthly Revenue";
+    styleGroup(worksheet.getCell(startRow, startColumn));
+
+    worksheet.mergeCells(startRow + 1, startColumn, startRow + 2, startColumn);
+    worksheet.getCell(startRow + 1, startColumn).value = "Date";
+    styleHeader(worksheet.getCell(startRow + 1, startColumn));
+    worksheet.getColumn(startColumn).width = 13;
+
+    years.forEach((year, index) => {
+      const revenueColumn = startColumn + 1 + index * 2;
+      const ticketsColumn = revenueColumn + 1;
+      worksheet.getCell(startRow + 2, revenueColumn).value = `${year} Revenue`;
+      worksheet.getCell(startRow + 2, ticketsColumn).value = `${year} Tickets`;
+      styleHeader(worksheet.getCell(startRow + 2, revenueColumn));
+      styleHeader(worksheet.getCell(startRow + 2, ticketsColumn));
+      worksheet.getColumn(revenueColumn).width = 14;
+      worksheet.getColumn(ticketsColumn).width = 14;
+      worksheet.getColumn(ticketsColumn).hidden = Boolean(hideCounts);
+    });
+
+    for (let monthNumber = 1; monthNumber <= 12; monthNumber += 1) {
+      const row = startRow + 2 + monthNumber;
+      const monthCell = worksheet.getCell(row, startColumn);
+      monthCell.value = MONTH_NAMES[monthNumber - 1];
+      styleBody(monthCell);
+
+      years.forEach((year, index) => {
+        const revenueColumn = startColumn + 1 + index * 2;
+        const ticketsColumn = revenueColumn + 1;
+        const revenueCell = worksheet.getCell(row, revenueColumn);
+        const ticketsCell = worksheet.getCell(row, ticketsColumn);
+        styleBody(revenueCell, "right");
+        styleBody(ticketsCell, "right");
+        const total = totalsLookup.get(`${year}|${monthNumber}`);
+        if (!total) return;
+
+        revenueCell.value = total["Total Revenue"];
+        revenueCell.numFmt = "$#,##0.00";
+        revenueCell.fill = fill(COLORS.green);
+        ticketsCell.value = total["Total Tickets"];
+        ticketsCell.numFmt = "0";
+      });
+    }
+
+    return endColumn;
+  }
+
+  function addLocationSheet(
+    workbook,
+    location,
+    summaryRows,
+    locationMonthlyTotals,
+    options,
+    usedNames,
+  ) {
     const sheetName = safeSheetName(location, usedNames);
     const years = [...new Set([
       ...summaryRows.map((row) => Number(row.Year)),
       ...locationMonthlyTotals.map((row) => Number(row.Year)),
     ])].sort((left, right) => left - right);
-    const layout = buildSectionLayout(years);
+
+    const weekdayDurations = collectDurations(summaryRows, "Weekday");
+    const weekendDurations = collectDurations(summaryRows, "Weekend");
+    const weekdayLayout = buildGridLayout(weekdayDurations, years, 1);
+    const weekendLayout = buildGridLayout(weekendDurations, years, 1);
+    const priceLookup = createPriceLookup(summaryRows);
+    const totalsLookup = monthlyLookup(locationMonthlyTotals);
+
+    const revenueStartColumn = Math.max(
+      weekdayLayout.endColumn,
+      weekendLayout.endColumn,
+    ) + 2;
+    const revenueEndColumn = revenueStartColumn + years.length * 2;
+    const finalColumn = Math.max(
+      weekdayLayout.endColumn,
+      weekendLayout.endColumn,
+      revenueEndColumn,
+    );
 
     const worksheet = workbook.addWorksheet(sheetName, {
-      views: [{ state: "frozen", ySplit: 2 }],
+      views: [{ state: "frozen", xSplit: 1, ySplit: 3 }],
     });
-    configureLocationColumns(worksheet, years, layout, options.hideCounts);
+    configureGridColumns(worksheet, weekdayLayout, options.hideCounts);
+    configureGridColumns(worksheet, weekendLayout, options.hideCounts);
+    worksheet.getColumn(revenueStartColumn - 1).width = 3;
 
     worksheet.properties.defaultRowHeight = 18;
     worksheet.getRow(1).height = 27;
-    worksheet.mergeCells(1, 1, 1, layout.weekendEnd);
+    worksheet.mergeCells(1, 1, 1, finalColumn);
     worksheet.getCell(1, 1).value = location;
     styleTitle(worksheet.getCell(1, 1));
 
-    worksheet.mergeCells(2, 1, 2, layout.weekendEnd);
+    worksheet.mergeCells(2, 1, 2, finalColumn);
     worksheet.getCell(2, 1).value = (
-      "Weekday and weekend prices are shown side by side. Ticket-count columns remain between yearly prices and are hidden by default. Monthly revenue totals are shown on the right."
+      "Months run down the left. Within each duration, yearly prices are beside each other; ticket-count columns remain between them and are hidden by default."
     );
     worksheet.getCell(2, 1).font = {
       italic: true,
@@ -509,78 +587,34 @@
       size: 9,
     };
 
-    const totalsLookup = monthlyLookup(locationMonthlyTotals);
-    const monthNumbers = [...new Set([
-      ...summaryRows.map((row) => Number(row["Month Number"])),
-      ...locationMonthlyTotals.map((row) => Number(row["Month Number"])),
-    ])].sort((left, right) => left - right);
+    const weekdayEndRow = writePriceGrid(
+      worksheet,
+      4,
+      "Weekdays",
+      "Weekday",
+      weekdayLayout,
+      years,
+      priceLookup,
+    );
 
-    let currentRow = 4;
-    for (const monthNumber of monthNumbers) {
-      const monthName = MONTH_NAMES[monthNumber - 1];
-      const monthRows = summaryRows.filter(
-        (row) => Number(row["Month Number"]) === monthNumber,
-      );
-      const weekdayData = collectDayGroupRows(monthRows, "Weekday");
-      const weekendData = collectDayGroupRows(monthRows, "Weekend");
+    writeRevenueGrid(
+      worksheet,
+      4,
+      revenueStartColumn,
+      years,
+      totalsLookup,
+      options.hideCounts,
+    );
 
-      worksheet.mergeCells(currentRow, layout.weekdayStart, currentRow, layout.weekendEnd);
-      worksheet.getCell(currentRow, layout.weekdayStart).value = monthName;
-      styleMonth(worksheet.getCell(currentRow, layout.weekdayStart));
-      worksheet.getRow(currentRow).height = 21;
-      currentRow += 1;
-
-      worksheet.mergeCells(currentRow, layout.weekdayStart, currentRow, layout.weekdayEnd);
-      worksheet.mergeCells(currentRow, layout.weekendStart, currentRow, layout.weekendEnd);
-      worksheet.getCell(currentRow, layout.weekdayStart).value = "Weekdays:";
-      worksheet.getCell(currentRow, layout.weekendStart).value = "Weekends";
-      styleGroup(worksheet.getCell(currentRow, layout.weekdayStart));
-      styleGroup(worksheet.getCell(currentRow, layout.weekendStart));
-      currentRow += 1;
-
-      const headerRow = currentRow;
-      writeSectionHeader(worksheet, headerRow, layout.weekdayStart, years);
-      writeSectionHeader(worksheet, headerRow, layout.weekendStart, years);
-      writeMonthlyRevenueTotals(
-        worksheet,
-        headerRow,
-        years,
-        monthNumber,
-        totalsLookup,
-        layout.totalsLabelColumn,
-        layout.totalsValueColumn,
-      );
-      currentRow += 1;
-
-      const visibleRows = Math.max(
-        weekdayData.durations.length,
-        weekendData.durations.length,
-        years.length - 1,
-        1,
-      );
-
-      for (let index = 0; index < visibleRows; index += 1) {
-        writeSectionRow(
-          worksheet,
-          currentRow,
-          layout.weekdayStart,
-          years,
-          weekdayData.durations[index] || "",
-          weekdayData.lookup,
-        );
-        writeSectionRow(
-          worksheet,
-          currentRow,
-          layout.weekendStart,
-          years,
-          weekendData.durations[index] || "",
-          weekendData.lookup,
-        );
-        currentRow += 1;
-      }
-
-      currentRow += 3;
-    }
+    writePriceGrid(
+      worksheet,
+      weekdayEndRow + 2,
+      "Weekends",
+      "Weekend",
+      weekendLayout,
+      years,
+      priceLookup,
+    );
 
     worksheet.pageSetup = {
       orientation: "landscape",
@@ -588,10 +622,10 @@
       fitToWidth: 1,
       fitToHeight: 0,
       margins: {
-        left: 0.25, right: 0.25, top: 0.45, bottom: 0.45, header: 0.2, footer: 0.2,
+        left: 0.2, right: 0.2, top: 0.4, bottom: 0.4, header: 0.15, footer: 0.15,
       },
     };
-    worksheet.printTitlesRow = "1:1";
+    worksheet.printTitlesRow = "1:2";
   }
 
   async function buildWorkbook(analysis, options = {}, onProgress = () => {}) {
